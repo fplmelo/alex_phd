@@ -1,0 +1,286 @@
+---
+title: "Baseline Analyses"
+author: "Felipe"
+format: html
+code-annotations: hover
+---
+
+```{r global settings}
+#| message: false
+#| warning: false
+#| include: false
+
+setwd("~/Google Drive/NTU/phd_students/Alex_Nderi") # Change accordingly to your directory
+
+```
+
+
+## This is th Alex's baseline data
+
+```{r LIst of Libraries}
+#| warning: false
+
+library(tidyverse)
+library(vegan)
+library(entropart)
+library(betapart)
+library(iNEXT)
+
+
+```
+
+## Loading and wrangling data
+```{r}
+
+baseline<-read.csv("baseline_cover_test.csv")
+baseline %>%
+  replace(is.na(.), 0)->baseline
+
+## Making it into proportions
+
+baseline %>% 
+  mutate_if(is.numeric,
+    ~case_when(.==1~0.5,
+              .==2~2.5,
+              .==3~7.5,
+              .==4~17.5,
+              .==5~37.5,
+              .==6~62.5,
+              .==7~87.5,
+              .default = as.numeric(.)))->baseline_prop # proportion data
+
+baseline %>% 
+  mutate_if(is.numeric,
+    ~case_when(.>0~1,
+              .default = as.numeric(.)))->baseline_freq # frequency data (0 & 1)
+
+
+```
+
+Here we create two different databases:
+
+1) An abundance-based (percentages) that consider dominance of species and;
+2) A presence/absence database, that accounts only for whether each species are present or not in each quadrant (1x1m²)
+
+
+## Creating "plot" variable that group others
+
+For analytical purposes, we need to create a factor that helps us to group `quadrants`(1x1m²) by `plots`(10x10m²)
+
+```{r}
+
+## Coverage data
+ baseline_prop%>% 
+  pivot_longer(!species_name, names_to = "quadrant", values_to = "prop") %>% # create a long data with "quadrant" variable
+  mutate(plot=substr(quadrant, 1,3)) %>% 
+  filter(prop!=0) %>% # filter only species that occurred per quadrant
+  pivot_wider(names_from = plot, values_from = prop) %>% # back to wide format
+  arrange(quadrant) %>% # arrange by quadrant
+  group_by(species_name) %>% 
+  summarise_if(is.numeric, ~ mean(., na.rm = TRUE)) %>% 
+  mutate(across(where(is.numeric), ~replace_na(., 0)))->baseline_prop_analyses # This creates a table grouping the average occurrence of species by quadrant
+
+## Presence/Absence matrices
+
+baseline_freq %>% 
+  pivot_longer(!species_name, names_to = "quadrant", values_to = "freq") %>% 
+  mutate(plot=substr(quadrant, 1,3)) %>% 
+  filter(freq!=0) %>% 
+  count(species_name, plot) %>% 
+  arrange(plot) %>% 
+  pivot_wider(names_from = plot, values_from = n) %>% 
+  #group_by(species_name) %>% 
+  replace(is.na(.), 0) %>% 
+  #summarise_if(is.numeric, ~ n(.)) %>% 
+  rbind(c("AAN_quad", as.numeric(rep(12,45)))) %>% # Here I am adding a line that contains just the the number of quadrants per plot, needed for INEXT analyses, later.
+  arrange(species_name) %>% 
+  mutate_at(vars(!species_name), as.numeric)->baseline_inc_freq # relative frequencies n/12
+  
+baseline_prop_analyses %>% 
+  mutate_if(is.numeric,
+    ~case_when(.>0~1,
+              .default = as.numeric(.)))->baseline_freq_raw # presence/abscense data
+
+```
+
+Now we have three datasets for the specific analyses that come later in this doc. Datasets are:
+1) A sp x plot dataset with mean coverages
+2) A sp x plot with relative frequencies per plot (0 to 12)
+3) A sp x plot with raw presence/absence per plot (0 or 1)
+
+## Species accumulation curve via rarefaction, interpolation methods
+
+Here we are using iNEXT package that uses the method of rarefaction/interpolation to estimate species diversity and accumulation curves, based on sample coverage of sample units (plots, in our case)
+
+```{r}
+# Using coverage as frequecy data
+
+iNEXT(as.data.frame(baseline_inc_freq[,-1]), q=c(0,1,2), datatype="incidence_freq")->res_inext
+
+# plot(res_inext) # this function uses ggplot by I prefer the ggiNEXT
+```
+
+I suggest that you study the `iNEXT` vignette to understand what the function generates. 
+
+A brief glimpse is:
+
+iNEXT generates a combination of rarefaction and extrapolation curves that permit us ot both estimate the total number of species beyond the observed but also allows to compare plots using extrapolations (estimations). 
+
+```{r}
+## Orders of True Diversity
+## ggiNEXT(res_inext, type=1, facet.var="Assemblage")
+
+## Too big to visualize
+```
+
+In the plot above, the we can see one of the output graphs faceting plots and separating curves of each order of diversity `q` (0,1,2) where:
+* When q = 0, this is equivalent to species `richness`
+* When q = 1, this is equal to diversity of `common species`
+* When q = 2, this is equal to diverity of `dominant species`
+
+
+```{r}
+ggiNEXT(res_inext, type=1, facet.var="Order.q", color.var="Assemblage")
+
+```
+
+The graph above is an inversion of the first, which I like more
+
+```{r}
+## Sample coverage
+ggiNEXT(res_inext,type=2, facet.var="None", color.var="Assemblage")
+```
+
+Here we have a clear otion that sample coverage (this means, sample effort) is good enough
+
+## Something wrong, here
+```{r}
+#| eval: false
+#| include: false
+
+# Using coverage as Abundance data
+
+iNEXT(as.data.frame(baseline_prop_analyses[,-1]), q=c(0,1,2), datatype="abundance")->res_inext_abund
+
+## Orders of True Diversity
+ggiNEXT(res_inext_abund, type=1, facet.var="Assemblage")
+
+ggiNEXT(res_inext_abund, type=1, facet.var="Order.q", color.var="Assemblage")
+
+## Sample coverage
+ggiNEXT(res_inext_abund,type=2, facet.var="None", color.var="Assemblage")
+
+
+```
+
+## Alfa, beta and gamma diversities
+
+### Overview of the communites (quadrat level)
+
+```{r entropart}
+#| warning: false
+
+# MC_q<-MetaCommunity(baseline_prop)
+# summary(MC_q)
+# plot(MC_q)
+# divpart_q<-DivPart(q = 0, MC_q, Correction = "Best")
+# summary(divpart_q)
+# plot(divpart_q)
+# 
+# dp_q <- DivProfile(seq(0, 2, 1), MC_q, Biased = FALSE, NumberOfSimulations = 0) ## Takes too long, only run once
+# 
+# plot(dp_q)
+
+
+```
+
+### Overview of the communites (plot level)
+
+```{r}
+#| warning: false
+
+MC_p<-MetaCommunity(baseline_prop_analyses)
+summary(MC_p)
+plot(MC_p)
+divpart<-DivPart(q = 0, MC_p, Correction = "Best")
+summary(divpart)
+plot(divpart)
+
+dp_p <- DivProfile(seq(0, 2, 1), MC_p, Biased = FALSE, NumberOfSimulations = 0) # takes too long, only run once
+
+plot(dp_p)
+
+```
+
+## Species composition NMDS
+
+```{r}
+#| warning: false
+
+base_nmds<-metaMDS(t(baseline_prop[,-1]))
+nmds_res<-(base_nmds$points)
+nmds_res %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  mutate(plot=substr(rowname, 1,2))->nmds_res
+
+hull <- nmds_res %>%
+   group_by(plot) %>%
+  slice(chull(MDS1, MDS2))
+nmds_res %>% 
+  ggplot(aes(MDS1, MDS2, color=plot, fill=plot))+
+  geom_point()+
+  geom_polygon(data = hull, alpha = 0.5)
+
+
+```
+
+## Partition of Beta Diversity
+
+```{r}
+library(betapart)
+
+p<-t(baseline_freq_raw[,-1])
+
+beta_jac<-beta.multi(p, index.family="jac")
+
+
+```
+
+$beta.JTU
+**0.5882353** -> This is the amount of species turnover among the plots  
+
+$beta.JNE
+**0.03942428** -> This is the amount of nestedness among the plots  
+
+$beta.JAC  
+**0.6276596** -> This is the total dissimilarity value among the plots 
+
+## Preliminary conclusions
+
+1) Samples have in average the similar number of species
+2) Species accumulation curve at the plot (10x10m) level stabilize for common (q=1) and dominant species (q=2) but is far from enough for rare species (q=0)
+3) Methods seems adequate to capture diversity of plants at this scale
+4) Species composition seem to vary a lot at this scale, suggesting underalaying factors such as: founding effects; inter-speciifc competition, etc...
+5) Beta diversity is largely due to turnover of species, this suggesting that dispersal limitations and local-scale processes govern species assembly
+
+## More to do...
+
+### co-occurence of dominant species
+
+```{r}
+baseline_prop %>% 
+  # mutate(mean.abund = rowMeans(select(., where(is.numeric)))) %>% 
+  pivot_longer(!species_name,names_to = "quadrants", values_to = "prop") %>% 
+  arrange(desc(prop)) %>% 
+  pivot_wider(names_from = species_name, values_from = prop, values_fn = sum)->multi.corr
+
+cor<-cor(multi.corr[,-1])
+
+cor[cor > 0.5 | cor <.99]
+cor
+
+```
+
+
+
