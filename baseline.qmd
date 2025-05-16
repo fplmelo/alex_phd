@@ -153,25 +153,6 @@ ggiNEXT(res_inext,type=2, facet.var="None", color.var="Assemblage")
 
 Here we have a clear otion that sample coverage (this means, sample effort) is good enough
 
-## Something wrong, here
-```{r}
-#| eval: false
-#| include: false
-
-# Using coverage as Abundance data
-
-iNEXT(as.data.frame(baseline_prop_analyses[,-1]), q=c(0,1,2), datatype="abundance")->res_inext_abund
-
-## Orders of True Diversity
-ggiNEXT(res_inext_abund, type=1, facet.var="Assemblage")
-
-ggiNEXT(res_inext_abund, type=1, facet.var="Order.q", color.var="Assemblage")
-
-## Sample coverage
-ggiNEXT(res_inext_abund,type=2, facet.var="None", color.var="Assemblage")
-
-
-```
 
 ## Alfa, beta and gamma diversities
 
@@ -282,5 +263,7 @@ cor
 
 ```
 
+
+This is a prelimianry version of Alex's 
 
 
